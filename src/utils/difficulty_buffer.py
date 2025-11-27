@@ -56,13 +56,10 @@ class DifficultyBuffer:
         else:
             d_norm = torch.zeros_like(d)
 
-        # 简单的 exp 权重
         w = torch.exp(self.gamma * d_norm)
 
-        # clip 在 [w_min, w_max]
         w = torch.clamp(w, self.w_min, self.w_max)
 
-        # 让 batch 内均值 ≈ 1，避免整体有效 lr 改变
         w = w * (w.numel() / (w.sum() + 1e-6))
 
         return w

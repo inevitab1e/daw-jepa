@@ -62,10 +62,10 @@ def build_dataset(
         train_t = build_transforms(crop_size, train=True)
         test_t = build_transforms(crop_size, train=False)
         train_set = torchvision.datasets.STL10(
-            root=root, split="train", download=False, transform=train_t
+            root=root, split="train", download=True, transform=train_t
         )
         test_set = torchvision.datasets.STL10(
-            root=root, split="test", download=False, transform=test_t
+            root=root, split="test", download=True, transform=test_t
         )
         num_classes = 10
 
@@ -73,10 +73,10 @@ def build_dataset(
         train_t = build_transforms(crop_size, train=True)
         test_t = build_transforms(crop_size, train=False)
         train_set = torchvision.datasets.CIFAR10(
-            root=root, train=True, download=False, transform=train_t
+            root=root, train=True, download=True, transform=train_t
         )
         test_set = torchvision.datasets.CIFAR10(
-            root=root, train=False, download=False, transform=test_t
+            root=root, train=False, download=True, transform=test_t
         )
         num_classes = 10
 
@@ -84,10 +84,10 @@ def build_dataset(
         train_t = build_transforms(crop_size, train=True)
         test_t = build_transforms(crop_size, train=False)
         train_set = torchvision.datasets.CIFAR100(
-            root=root, train=True, download=False, transform=train_t
+            root=root, train=True, download=True, transform=train_t
         )
         test_set = torchvision.datasets.CIFAR100(
-            root=root, train=False, download=False, transform=test_t
+            root=root, train=False, download=True, transform=test_t
         )
         num_classes = 100
 
@@ -152,10 +152,10 @@ def build_ijepa_encoder(
         model_name=model_name,
     )
 
-    # 加载预训练参数
+    # 加载预训练参数：使用 EMA 的 target_encoder 做 downstream
     logger.info(f"Loading checkpoint from: {ckpt_path}")
     state = torch.load(ckpt_path, map_location="cpu")
-    encoder.load_state_dict(state["encoder"], strict=True)
+    encoder.load_state_dict(state["target_encoder"], strict=True)
 
     encoder.to(device)
     encoder.eval()
@@ -168,12 +168,13 @@ def build_ijepa_encoder(
     # 构建「全 context mask」，所有 patch 都在 context 里
     H_p, W_p = crop_size // patch_size, crop_size // patch_size
     num_patches = H_p * W_p
-    full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
-    # 形状 [B, nenc, L_enc]，这里 nenc=1
-    masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(dummy.size(0), 1, 1)
+    # full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
+    # # 先得到 [B, 1, L]
+    # masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(dummy.size(0), 1, 1)
+    masks_enc = torch.ones((dummy.size(0), 1, num_patches), device=device, dtype=torch.bool)
 
     # encoder(imgs, masks_enc) 返回 [B, L_ctx, D] 的 patch 表征
-    feats = encoder(dummy, masks_enc)   # 你现有的 encoder 接口就是这样用的
+    feats = encoder(dummy, masks_enc)
     # 我们对 patch 维度做 mean-pool 得到 [B, D]
     pooled = feats.mean(dim=1)
     feature_dim = pooled.size(-1)
@@ -195,8 +196,10 @@ def extract_features(encoder, imgs, patch_size: int):
     B, C, H, W = imgs.shape
     H_p, W_p = H // patch_size, W // patch_size
     num_patches = H_p * W_p
-    full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
-    masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(B, 1, 1)  # [B, 1, L]
+    # full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
+    # # [B, 1, L]
+    # masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(B, 1, 1)
+    masks_enc = torch.ones((B, 1, num_patches), device=device, dtype=torch.bool)
 
     patch_feats = encoder(imgs, masks_enc)  # [B, L_ctx, D]
     feats = patch_feats.mean(dim=1)         # [B, D]

@@ -6,6 +6,7 @@
 #
 
 import os
+from datetime import datetime
 
 from src.utils.difficulty_buffer import DifficultyBuffer
 
@@ -99,6 +100,7 @@ def main(args, resume_preempt=False):
     image_folder = args['data']['image_folder']
     crop_size = args['data']['crop_size']
     crop_scale = args['data']['crop_scale']
+    with_index = args['data'].get('with_index', False)
     # --
 
     # -- MASK
@@ -125,11 +127,20 @@ def main(args, resume_preempt=False):
 
     # -- LOGGING
     folder = args['logging']['folder']
+    if folder == "auto":
+        timestr = datetime.now().strftime("%Y%m%d-%H%M%S")
+        folder = (
+            f"logs/vits{patch_size}_{crop_size}-bs{batch_size}-ep{num_epochs}"
+            f"-{args['daw']['mode']}-{timestr}"
+        )
+    os.makedirs(folder, exist_ok=True)
     tag = args['logging']['write_tag']
 
     dump = os.path.join(folder, 'params-ijepa.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
+
+
     # ----------------------------------------------------------------------- #
 
     try:
@@ -159,6 +170,12 @@ def main(args, resume_preempt=False):
                            ('%.5f', 'mask-A'),
                            ('%.5f', 'mask-B'),
                            ('%d', 'time (ms)'))
+    import wandb
+    wandb.init(
+        project="daw-jepa",
+        name=f"vits_{crop_size}_bs{batch_size}_{args['daw']['mode']}_{timestr}",
+        config=args
+    )
 
     # -- init model
     encoder, predictor = init_model(
@@ -203,6 +220,7 @@ def main(args, resume_preempt=False):
         root_path=root_path,
         image_folder=image_folder,
         copy_data=copy_data,
+        with_index=with_index,
         drop_last=True)
     ipe = len(unsupervised_loader)
 
@@ -404,6 +422,19 @@ def main(args, resume_preempt=False):
             loss_meter.update(loss)
             time_meter.update(etime)
 
+            throughput = batch_size / (etime / 1000.0)
+            wandb.log({
+                "loss": float(loss),
+                "lr": float(_new_lr),
+                "wd": float(_new_wd),
+                "maskA": maskA_meter.val,
+                "maskB": maskB_meter.val,
+                "iter_time_ms": etime,
+                "throughput_samples_per_sec": throughput,
+                "epoch": epoch + 1,
+                "iteration": itr,
+            })
+
             # -- Logging
             def log_stats():
                 csv_logger.log(epoch + 1, itr, loss, maskA_meter.val, maskB_meter.val, etime)
@@ -429,14 +460,26 @@ def main(args, resume_preempt=False):
                                        grad_stats.last_layer,
                                        grad_stats.min,
                                        grad_stats.max))
-
             log_stats()
 
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
+        wandb.log({
+            "epoch_loss": loss_meter.avg,
+            "epoch": epoch
+        })
         save_checkpoint(epoch + 1)
+        if difficulty_buffer is not None:
+            wandb.log({
+                "difficulty_histogram": wandb.Histogram(
+                    difficulty_buffer.buffer.detach().cpu().numpy()
+                ),
+                "epoch": epoch + 1
+            })
+
+    wandb.finish()
 
 
 if __name__ == "__main__":

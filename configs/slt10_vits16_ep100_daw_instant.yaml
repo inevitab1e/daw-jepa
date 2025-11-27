@@ -15,7 +15,7 @@ data:
   with_index: true
 daw:
   enabled: true
-  mode: "ema"          # "instant" = 当前 loss; "ema" = 历史 EMA
+  mode: "instant"          # "instant" = 当前 loss; "ema" = 历史 EMA
   ema_alpha: 0.9
   gamma: 1.0
   w_min: 0.5

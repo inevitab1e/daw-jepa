@@ -200,7 +200,7 @@ class ImageNetWithIndex(ImageNet):
             target = self.target_transform(target)
 
         # 关键：多返回一个 index
-        return img, target, index
+        return (img, index), target
 
 
 class ImageNetSubsetWithIndex(ImageNetSubset):
@@ -212,7 +212,7 @@ class ImageNetSubsetWithIndex(ImageNetSubset):
             img = self.dataset.transform(img)
         if self.dataset.target_transform is not None:
             target = self.dataset.target_transform(target)
-        return img, target, index
+        return (img, index), target
 
 
 def copy_imgnt_locally(
