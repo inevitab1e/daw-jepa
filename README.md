@@ -33,21 +33,21 @@ The main methodological contribution is implemented in:
 - `src/train.py` (integration into the training loop)
 - `configs/in100_vits16_ep100_daw*.yaml` (configuration)
 
-### 2.1 Difficulty buffer
+### 2.1 Difficulty Buffer
 
-For each training image, we maintain a scalar **difficulty score** based on the per-sample prediction loss:
+For each training image, we maintain a scalar **difficulty score** based on its per-sample prediction loss:
 
-- The JEPA loss is computed as a **smooth L1 loss** between target features `h` and predicted features `z`:
-  \[
-  \text{diff} = \text{SmoothL1}(z, h) \quad \text{(element-wise, no reduction)}
-  \]
-- We then average over all spatial / mask dimensions to obtain a **per-sample loss**:
-  \[
-  \ell_i = \text{mean}(\text{diff}_i)
-  \]
+- The JEPA loss is computed as a **Smooth L1 loss** between target features `h` and predicted features `z`:
+
+  $$\text{diff} = \text{SmoothL1}(z, h) \quad \text{(element-wise, no reduction)}$$
+
+- We then average over all spatial and mask dimensions to obtain a **per-sample loss**:
+
+  $$\ell_i = \text{mean}(\text{diff}_i)$$
+
 - Because I-JEPA uses multiple target masks per image, we:
-  - group per-sample losses back to per-image losses
-  - average them to get a per-image difficulty
+  - group per-sample losses back to per-image losses  
+  - average them to obtain a final **per-image difficulty**
 
 The **difficulty buffer** (`DifficultyBuffer`) stores a scalar difficulty for each sample index.
 
