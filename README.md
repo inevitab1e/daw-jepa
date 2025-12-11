@@ -76,7 +76,7 @@ daw:
 For convenience, we provide a Colab-style notebook that contains the exact commands and configuration we used to run all experiments in this repository.  
 See:
 
-- `notebooks/DAW_JEPA_Colab_Clean.ipynbnotebooks`
+- `notebooks/DAW_JEPA_Colab_Clean.ipynb`
 
 This notebook walks through:
 - Setting up the environment in Google Colab
