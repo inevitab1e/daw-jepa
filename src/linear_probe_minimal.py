@@ -18,8 +18,6 @@ class LinearProbe(nn.Module):
         return self.fc(x)
 
 
-# ---- Dataset ----
-
 def build_stl10(root, crop=224):
     transform = T.Compose([
         T.Resize(crop),
@@ -40,11 +38,9 @@ def build_cifar10(root, crop=224):
     test = torchvision.datasets.CIFAR10(root, train=False, download=True, transform=transform)
     return train, test, 10
 
-# ---- Encoder wrapper ----
 
 @torch.no_grad()
 def build_encoder(ckpt_path, device):
-    # Build JEPA encoder (teacher)
     encoder, predictor = init_model(
         device=device,
         patch_size=16,
@@ -60,25 +56,18 @@ def build_encoder(ckpt_path, device):
     for p in encoder.parameters():
         p.requires_grad_(False)
 
-    # Wrapper: encoder(x) -> global feature
     def encode(x):
         B, C, H, W = x.shape
-        num_patches = (H // 16) * (W // 16)      # 196
-        # correct mask format: [B, L], int indices
+        num_patches = (H // 16) * (W // 16)
         idx = torch.arange(num_patches, device=x.device).unsqueeze(0).repeat(B, 1)
-        # forward
-        patch_feats = encoder(x, idx)   # [B, L, D]
-        # global feature via mean-pool
-        return patch_feats.mean(dim=1)  # [B, D]
+        patch_feats = encoder(x, idx)
+        return patch_feats.mean(dim=1)
 
-    # Infer feature dimension
     dummy = torch.randn(2, 3, 224, 224, device=device)
     feat_dim = encode(dummy).shape[-1]
 
     return encode, feat_dim
 
-
-# ---- Train & Test ----
 
 def train_one_epoch(encode, head, loader, opt, device):
     head.train()
@@ -131,8 +120,6 @@ def evaluate(encode, head, loader, device):
     return loss_sum / total, 100 * correct / total
 
 
-# ---- Main ----
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt_path", required=True)
@@ -150,22 +137,17 @@ def main():
     else:
         raise ValueError("Unsupported dataset")
 
-    # train_set, test_set, ncls = build_stl10(args.data_root)
-
     train_loader = DataLoader(train_set, batch_size=256, shuffle=True)
     test_loader = DataLoader(test_set, batch_size=256, shuffle=False)
 
     encode, feat_dim = build_encoder(args.ckpt_path, device)
     head = LinearProbe(feat_dim, ncls).to(device)
     opt = optim.SGD(head.parameters(), lr=args.lr, momentum=0.9)
-    # opt = optim.AdamW(head.parameters(), lr=args.lr, weight_decay=0.0)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     best_acc = 0
     for ep in range(args.epochs):
         tr_loss, tr_acc = train_one_epoch(encode, head, train_loader, opt, device)
         te_loss, te_acc = evaluate(encode, head, test_loader, device)
-        # scheduler.step()
         best_acc = max(best_acc, te_acc)
 
         print(f"Epoch {ep+1}: Train {tr_acc:.2f}  Test {te_acc:.2f}  Best {best_acc:.2f}")

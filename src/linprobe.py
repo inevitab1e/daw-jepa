@@ -15,15 +15,9 @@ import torchvision.transforms as T
 
 from logging import getLogger
 
-# 复用 IJEPA 里的工具
-from src.helper import init_model  # 用来构建 ViT encoder/predictor
+from src.helper import init_model
 
 logger = getLogger()
-
-
-# -------------------------
-# 数据集构建
-# -------------------------
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -53,10 +47,7 @@ def build_dataset(
     root: str,
     crop_size: int,
 ) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, int]:
-    """
-    支持 stl10 / cifar10 / cifar100 / imagenet100 (ImageFolder 格式)
-    返回 train_set, test_set, num_classes
-    """
+
     name = name.lower()
     if name == "stl10":
         train_t = build_transforms(crop_size, train=True)
@@ -92,9 +83,6 @@ def build_dataset(
         num_classes = 100
 
     elif name == "imagenet100":
-        # 假设你已经把 ImageNet100 转成标准 ImageFolder 结构：
-        #   root/train/<class_x>/*.jpeg
-        #   root/val/<class_x>/*.jpeg
         train_t = build_transforms(crop_size, train=True)
         test_t = build_transforms(crop_size, train=False)
         train_dir = os.path.join(root, "train")
@@ -109,10 +97,6 @@ def build_dataset(
     return train_set, test_set, num_classes
 
 
-# -------------------------
-# 线性 probe 模型
-# -------------------------
-
 class LinearProbe(nn.Module):
     def __init__(self, feature_dim: int, num_classes: int):
         super().__init__()
@@ -121,10 +105,6 @@ class LinearProbe(nn.Module):
     def forward(self, x):
         return self.fc(x)
 
-
-# -------------------------
-# IJEPA encoder 封装
-# -------------------------
 
 @torch.no_grad()
 def build_ijepa_encoder(
@@ -136,13 +116,6 @@ def build_ijepa_encoder(
     pred_depth: int = 12,
     pred_emb_dim: int = 384,
 ):
-    """
-    使用 IJEPA 的 init_model 构建 encoder，并从 ckpt 加载权重。
-    返回：
-      - encoder (已冻结, eval 模式)
-      - feature_dim (线性 probe 输入维度)
-    """
-    logger.info("Building IJEPA encoder...")
     encoder, predictor = init_model(
         device=device,
         patch_size=patch_size,
@@ -152,7 +125,6 @@ def build_ijepa_encoder(
         model_name=model_name,
     )
 
-    # 加载预训练参数：使用 EMA 的 target_encoder 做 downstream
     logger.info(f"Loading checkpoint from: {ckpt_path}")
     state = torch.load(ckpt_path, map_location="cpu")
     encoder.load_state_dict(state["target_encoder"], strict=True)
@@ -162,20 +134,13 @@ def build_ijepa_encoder(
     for p in encoder.parameters():
         p.requires_grad = False
 
-    # 用一个 dummy batch 推一下，推断 feature_dim
     dummy = torch.randn(2, 3, crop_size, crop_size, device=device)
 
-    # 构建「全 context mask」，所有 patch 都在 context 里
     H_p, W_p = crop_size // patch_size, crop_size // patch_size
     num_patches = H_p * W_p
-    # full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
-    # # 先得到 [B, 1, L]
-    # masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(dummy.size(0), 1, 1)
     masks_enc = torch.ones((dummy.size(0), 1, num_patches), device=device, dtype=torch.bool)
 
-    # encoder(imgs, masks_enc) 返回 [B, L_ctx, D] 的 patch 表征
     feats = encoder(dummy, masks_enc)
-    # 我们对 patch 维度做 mean-pool 得到 [B, D]
     pooled = feats.mean(dim=1)
     feature_dim = pooled.size(-1)
 
@@ -185,30 +150,16 @@ def build_ijepa_encoder(
 
 @torch.no_grad()
 def extract_features(encoder, imgs, patch_size: int):
-    """
-    给一批图片 imgs，返回 [B, D] 的图像级特征。
-    做法：
-      - 构建全 context mask（所有 patch 都视为 context）
-      - 调用 encoder(imgs, masks_enc)
-      - 对 patch 做 mean-pool
-    """
     device = imgs.device
     B, C, H, W = imgs.shape
     H_p, W_p = H // patch_size, W // patch_size
     num_patches = H_p * W_p
-    # full_idx = torch.arange(num_patches, dtype=torch.int32, device=device)
-    # # [B, 1, L]
-    # masks_enc = full_idx.unsqueeze(0).unsqueeze(0).repeat(B, 1, 1)
     masks_enc = torch.ones((B, 1, num_patches), device=device, dtype=torch.bool)
 
-    patch_feats = encoder(imgs, masks_enc)  # [B, L_ctx, D]
-    feats = patch_feats.mean(dim=1)         # [B, D]
+    patch_feats = encoder(imgs, masks_enc)
+    feats = patch_feats.mean(dim=1)
     return feats
 
-
-# -------------------------
-# 训练 & 验证
-# -------------------------
 
 def train_one_epoch(
     encoder,
@@ -280,30 +231,20 @@ def evaluate(
     return avg_loss, acc
 
 
-# -------------------------
-# main
-# -------------------------
-
 def parse_args():
     p = argparse.ArgumentParser("Linear probe on IJEPA ViT encoder")
 
-    # 模型 & ckpt
-    p.add_argument("--ckpt_path", type=str, required=True,
-                   help="Path to your pre-trained IJEPA checkpoint (.pth.tar)")
-    p.add_argument("--model_name", type=str, default="vit_small",
-                   help="IJEPA model_name, e.g., vit_small / vit_base / ...")
+    p.add_argument("--ckpt_path", type=str, required=True)
+    p.add_argument("--model_name", type=str, default="vit_small")
     p.add_argument("--patch_size", type=int, default=16)
     p.add_argument("--crop_size", type=int, default=224)
     p.add_argument("--pred_depth", type=int, default=12)
     p.add_argument("--pred_emb_dim", type=int, default=384)
 
-    # 数据
     p.add_argument("--dataset", type=str, required=True,
                    choices=["stl10", "cifar10", "cifar100", "imagenet100"])
-    p.add_argument("--data_root", type=str, required=True,
-                   help="Root path for the chosen dataset")
+    p.add_argument("--data_root", type=str, required=True)
 
-    # 训练超参
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--lr", type=float, default=0.1)
@@ -319,7 +260,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # 1. 构建数据集 & dataloader
     train_set, test_set, num_classes = build_dataset(
         name=args.dataset,
         root=args.data_root,
@@ -341,7 +281,6 @@ def main():
         pin_memory=True,
     )
 
-    # 2. 构建 IJEPA encoder（冻结）
     encoder, feat_dim = build_ijepa_encoder(
         device=device,
         ckpt_path=args.ckpt_path,
@@ -352,7 +291,6 @@ def main():
         pred_emb_dim=args.pred_emb_dim,
     )
 
-    # 3. 线性头
     linear_head = LinearProbe(feat_dim, num_classes).to(device)
 
     optimizer = optim.SGD(

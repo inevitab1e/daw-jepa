@@ -363,41 +363,30 @@ def main(args, resume_preempt=False):
                     h = forward_target()
                     z = forward_context()
 
-                    # 1. elementwise smooth_l1_loss
                     diff = F.smooth_l1_loss(z, h, reduction='none')
 
-                    # 2. 除 batch 维以外全部平均 -> per-sample loss [B_pred]
-                    per_sample_loss = diff.view(diff.size(0), -1).mean(dim=1)  # [B_pred]
+                    per_sample_loss = diff.view(diff.size(0), -1).mean(dim=1)
 
-                    # 3. 计算 per-image loss，并用 DAW
                     if difficulty_buffer is not None:
-                        B_img = indices.size(0)  # 原始 batch size，比如 128
-                        B_pred = per_sample_loss.size(0)  # 比如 512
+                        B_img = indices.size(0)
+                        B_pred = per_sample_loss.size(0)
 
                         repeat_factor = B_pred // B_img
-                        assert B_pred % B_img == 0, \
-                            f"per_sample_loss batch dim {B_pred} 不能被 indices {B_img} 整除，请检查 mask 数量"
 
-                        # 每个 image 上 4 个预测的 loss 取平均，得到 per-image 难度
-                        per_image_loss = per_sample_loss.view(B_img, repeat_factor).mean(dim=1)  # [B_img]
+                        per_image_loss = per_sample_loss.view(B_img, repeat_factor).mean(dim=1)
 
-                        # 更新难度 buffer（per-image）
                         difficulty_buffer.update(indices, per_image_loss.detach())
-                        image_weights = difficulty_buffer.get_weights(indices, epoch)  # [B_img]
-
-                        # 把 per-image 权重扩展到每个预测
-                        weights_expanded = image_weights.repeat_interleave(repeat_factor)  # [B_pred]
+                        image_weights = difficulty_buffer.get_weights(indices, epoch)
+                        weights_expanded = image_weights.repeat(repeat_factor)
 
                         loss_local = (per_sample_loss * weights_expanded).sum() / (weights_expanded.sum() + 1e-6)
                     else:
                         loss_local = per_sample_loss.mean()
 
-                    # 4. 多卡情况下 AllReduce
                     if dist.is_available() and dist.is_initialized() and world_size > 1:
                         loss = AllReduce.apply(loss_local)
                     else:
                         loss = loss_local
-                    # ---- DAW end ----
 
                 #  Step 2. Backward & step
                 if use_bfloat16:
