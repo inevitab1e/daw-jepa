@@ -12,16 +12,15 @@ data:
   use_color_distortion: false
   use_gaussian_blur: false
   use_horizontal_flip: false
-  with_index: true      # ⚠️ 必须要有 DAW 才能工作
-
+  with_index: true
 daw:
-  enabled: true
-  mode: "ema"
   ema_alpha: 0.7
-  gamma: 0.3
-  w_min: 0.8
+  enabled: true
+  gamma: 0.5
+  mode: instant
   w_max: 1.2
-  warmup_epochs: 20
+  w_min: 0.8
+  warmup_epochs: 10
 logging:
   folder: auto
   write_tag: jepa
